@@ -2,9 +2,10 @@
 Claude Code 桌面版中文汉化安装包 (独立版)
 用法: python3 install.py [--uninstall]
 
-无需原始汉化包，所有翻译已内置。
+翻译文本不随仓库分发, 由 install.py 自动从 GitHub Release 获取;
+也可以把 resources-zh-CN.zip 放到本脚本同目录, 离线使用。
 """
-import json, os, sys, glob, subprocess, tempfile, shutil
+import json, os, sys, glob, subprocess, tempfile, shutil, zipfile, urllib.request, urllib.error
 from pathlib import Path
 
 # ============ 配置 ============
@@ -13,6 +14,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESOURCES_DIR = os.path.join(SCRIPT_DIR, "resources")
 TEMP_ROOT = os.path.join(tempfile.gettempdir(), "claude-zh-cn-patch")
 CLAUDE3P_CONFIG = os.path.expanduser(r"~\AppData\Local\Claude-3p\config.json")
+
+RELEASE_REPO = "pvq125800/claude-code-zh-cn"
+RELEASE_ZIP = "resources-zh-CN.zip"
+RESOURCE_FILES = (
+    "frontend-zh-CN.json",
+    "shell-zh-CN.json",
+    "statsig-zh-CN.json",
+    "hardcoded-zh-CN.json",
+)
 
 LANG_PATTERN = '"en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"'
 LANG_REPLACEMENT = '"en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID","zh-CN"'
@@ -28,6 +38,62 @@ def find_claude_dir():
         sys.exit(1)
     candidates.sort(key=os.path.getmtime, reverse=True)
     return candidates[0]
+
+
+def resources_ready():
+    return all(os.path.isfile(os.path.join(RESOURCES_DIR, n)) for n in RESOURCE_FILES)
+
+
+def extract_resource_zip(zip_path):
+    os.makedirs(RESOURCES_DIR, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in zf.namelist():
+            base = os.path.basename(name)
+            if base in RESOURCE_FILES:
+                with zf.open(name) as src, open(os.path.join(RESOURCES_DIR, base), "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+
+
+def download_release_zip(dest):
+    api = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+    req = urllib.request.Request(api, headers={"User-Agent": "claude-code-zh-cn", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        info = json.load(resp)
+    asset = next((a for a in info.get("assets", []) if a.get("name", "").endswith(".zip")), None)
+    if not asset:
+        raise RuntimeError(f"{RELEASE_REPO} 的最新 Release 里没有 zip 附件")
+    url = asset["browser_download_url"]
+    if not url.startswith("https://"):
+        raise RuntimeError(f"下载地址不是 https: {url}")
+    print(f"  下载 {info.get('tag_name', '?')} / {asset['name']} ({int(asset['size']) // 1024}KB)")
+    with urllib.request.urlopen(url, timeout=180) as resp, open(dest, "wb") as f:
+        shutil.copyfileobj(resp, f)
+
+
+def ensure_resources():
+    """翻译文本不在仓库里, 缺失时先找同目录 zip, 再从 GitHub Release 下载"""
+    if resources_ready():
+        return
+    print("[0/4] 获取翻译包...")
+    local_zip = os.path.join(SCRIPT_DIR, RELEASE_ZIP)
+    try:
+        if os.path.isfile(local_zip):
+            print(f"  使用本地翻译包: {os.path.basename(local_zip)}")
+            extract_resource_zip(local_zip)
+        else:
+            tmp_zip = os.path.join(tempfile.gettempdir(), RELEASE_ZIP)
+            download_release_zip(tmp_zip)
+            extract_resource_zip(tmp_zip)
+    except (urllib.error.URLError, RuntimeError, zipfile.BadZipFile, OSError) as e:
+        print(f"[错误] 翻译包获取失败: {e}")
+        print("  请手动下载, 然后把 zip 放到本脚本同目录后重新运行:")
+        print(f"  https://github.com/{RELEASE_REPO}/releases/latest")
+        sys.exit(1)
+    missing = [n for n in RESOURCE_FILES if not os.path.isfile(os.path.join(RESOURCES_DIR, n))]
+    if missing:
+        print(f"[错误] 翻译包缺少文件: {', '.join(missing)}")
+        sys.exit(1)
+    print("  翻译包就绪\n")
 
 
 def load_builtin_translations():
@@ -248,10 +314,12 @@ def main():
         print("\n完成! 请重启 Claude Code。")
         return
 
+    ensure_resources()
+
     print("[1/4] 准备翻译文件...")
     prepare_files(claude_dir)
 
-    print("\n[2/4] 部署 + 硬编码替换 (管理员权限)...")
+    print("\n[2/4] 部署翻译 + 语言白名单补丁 (管理员权限)...")
     deploy(claude_dir)
 
     print("\n[3/4] 更新配置...")

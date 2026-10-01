@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.bak
 .git/
+
+# 翻译文本经 GitHub Release 分发, 不进仓库
+resources/
+*.zip
