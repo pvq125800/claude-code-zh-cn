@@ -1,69 +1,79 @@
 # Claude Code 桌面版 中文汉化
 
-将 Claude Code 桌面版（Cowork / Code 界面）汉化为简体中文。
+把 Microsoft Store 版 Claude Code 桌面版（Cowork / Code 界面）汉化为简体中文。双击一次就好，Claude 每次自动更新后重跑一次。
 
-> ⚠️ 本项目非官方汉化，仅修改本地界面翻译文件，不修改核心逻辑。
+> ⚠️ 非官方汉化。只写入本地界面翻译文件与三处语言开关，不修改核心逻辑、不替换任何 JS 标识符。
+
+## 效果
+
+| 范围 | 覆盖 |
+|------|------|
+| 前端界面（`ion-dist/i18n`） | 31,749 / 32,243 条，**98%** |
+| Shell / 主进程文案 | 734 / 742 条，**99%** |
+| 动态文案（`i18n/dynamic`） | 49 / 49 条，**100%** |
+| Statsig 特性文案 | 65 条 |
+
+剩余未译的是新版 Claude 才出现、翻译包尚未覆盖的 key，会自动回退英文，等你反馈后补齐。
 
 ## 快速使用
 
-### 前置条件
-
-- **Windows 10/11**
-- **Python 3** — [下载](https://www.python.org/downloads/)（安装时勾选 "Add to PATH"）
-- **Claude Code 桌面版** — 从 Microsoft Store 安装
-
-### 安装
+**前置条件**：Windows 10/11、[Python 3](https://www.python.org/downloads/)（安装时勾选 Add to PATH）、从 Microsoft Store 安装的 Claude。
 
 1. 下载本仓库（Code → Download ZIP，或 `git clone`）
 2. 双击 **`install.bat`**（会自动请求管理员权限）
-3. 等待完成，重启 Claude Code
+3. 重启 Claude Code
 
-脚本会自动从 [Releases](../../releases) 拉取翻译包 `resources-zh-CN.zip`。如果你的网络访问 GitHub API 不通，手动下载那个 zip 放到 `install.bat` 同目录即可离线安装。
+脚本会从 [Releases](../../releases) 自动取翻译包 `resources-zh-CN.zip`。如果你的网络连 GitHub API 不通，手动下载该 zip 放到 `install.bat` 同目录，即可完全离线安装。
 
-### 卸载
+**卸载 / 还原英文**
 
 ```bash
-python install.py --uninstall
+install.bat --uninstall
 ```
 
-## 每次 Claude 更新后
+会按备份逐文件还原，并把 `app\resources` 的所有权交还 `TrustedInstaller`。
 
-Claude 更新会覆盖汉化文件，重新运行 `install.bat` 即可。
+## 它做了什么
 
-## 工作原理
+1. `Get-AppxPackage` 定位 Claude 安装目录（普通权限即可，不需要枚举受保护的 `WindowsApps`）
+2. 以官方 `en-US.json` 为底，叠加翻译包与补充译文，生成目标 `zh-CN.json` —— 所以 Claude 更新出新 key 也不会报错，只是那些条目回退英文
+3. 备份将被改动的文件（`%LOCALAPPDATA%\claude-code-zh-cn\backup`），写 `manifest.json` 供一键还原
+4. `takeown` + `icacls` 用 **SID**（Administrators + 当前用户）拿写入权限，不依赖默认禁用的内置 Administrator 账户
+5. 部署 6 个文件：`ion-dist/i18n/zh-CN.json`、`zh-CN.overrides.json`、`dynamic/zh-CN.json`、`statsig/zh-CN.json`，以及主进程用的 `zh-CN.json`、`zh-CN.overrides.json`
+6. 给 JS 打三处安全的字符串字面量补丁，每个改动文件先跑 `node --check`，不通过就自动回滚该文件：
+   - 语言白名单加入 `zh-CN`
+   - 语言名称表加入 `Chinese (China) / 简体中文 (中国)`
+   - `localeChoice:null` → `localeChoice:"zh-CN"`（不钉住会被系统或账号语言顶回英文）
+7. 把 `Claude-3p/config.json` 的 `locale` / `language` 设为 `zh-CN`
 
-1. 自动扫描 `C:\Program Files\WindowsApps\Claude_*` 定位最新版
-2. 获取翻译包（本地 zip 或 GitHub Release），合并内置翻译，并对新版新增 key 回退英文
-3. 将结果写入 `ion-dist/i18n/zh-CN.json`、`ion-dist/i18n/statsig/zh-CN.json`、`resources/zh-CN.json`
-4. 补丁 JS 语言白名单，加入 `zh-CN` 选项
-5. 更新 `AppData/Local/Claude-3p/config.json` 的 locale
+**没有"硬编码文本替换"这一步。** 早期版本会把 JS 源码里的 `Models` / `Extensions` / `tokens` 之类标识符一并翻译，破坏 `\p{Default_Ignorable_Code_Point}`、`Script_Extensions` 正则和 GitHub URL，导致整页白屏、设置页报 `1FV71M4`、`/new` 报 `1EUWK6G`。只保留 i18n 部署 + 语言开关，界面同样全中文且不会崩。
 
-早期版本还有一步"硬编码文本替换"，它会连带翻译 JS 源码里的标识符和正则（`Script_Extensions` 等），导致白屏和设置页崩溃，现已彻底移除。
+## 常见问题
 
-## 翻译覆盖
+- **提示未找到 Claude**：确认装的是 Microsoft Store 版；或手动指定 `install.bat --dir "C:\Program Files\WindowsApps\Claude_x.x.x.x_x64__pzs8sxrjxfjjc"`。
+- **Claude 自动更新后变回英文**：正常，更新会覆盖汉化文件，重跑 `install.bat` 即可。
+- **Store 更新报"包已损坏 / 修复失败"**：先 `install.bat --uninstall`（会把属主还给 `TrustedInstaller`），更新完再重装汉化。
+- **想先看不动文件地了解状况**：`install.bat --check` 只诊断，不改动任何东西。
 
-| 来源 | 条数 | 说明 |
-|------|------|------|
-| Claude Desktop 汉化包 | 14387 | 共享的前端翻译 |
-| Claude Code 专属 | ~2400 | Cowork、Code、远程控制等 |
-| **合计** | **16830** | 约 95% 覆盖率 |
+## 贡献翻译
 
-## 翻译文本放在哪里
+翻译文本随 **Release 附件** `resources-zh-CN.zip` 分发，不进仓库。zip 内 6 个文件按 key（官方 i18n 的哈希）组织：
 
-中文文本以 JSON 形式随 **Release 附件** `resources-zh-CN.zip` 分发，不进仓库：
+| 文件 | 说明 |
+|------|------|
+| `frontend-pack.json` / `frontend-extra.json` | 主界面；pack 为基础翻译，extra 为补充 |
+| `shell-pack.json` / `shell-extra.json` | Shell / 主进程文案 |
+| `dynamic-extra.json` | 动态下发文案 |
+| `statsig-pack.json` | Statsig 特性文案 |
 
-- `frontend-zh-CN.json` — 主界面，key 为哈希
-- `shell-zh-CN.json` / `statsig-zh-CN.json` — Shell 与 Statsig 特性文案
-- `hardcoded-zh-CN.json` — 英文原文与中文对照表（仅作记录，脚本不再用它做替换）
-
-想补充翻译：下载 zip，对照 Claude 安装目录 `ion-dist/i18n/en-US.json` 找出缺失或仍是英文的 key，改好后把 diff 发到 issue 或 PR。
+想补翻译：下载 zip，对照 Claude 安装目录里的 `ion-dist/i18n/en-US.json` 找出仍是英文的 key，把改好的文件发 issue 或 PR（附上 diff 就够，不用整包）。
 
 ## 许可与免责
 
-- 本项目采用 MIT 许可，见 [LICENSE](LICENSE)。
-- 与 Anthropic 官方无关联。仓库内不含任何账号、密钥或个人路径；`install.py` 只写入本机 Claude 安装目录。
-- 若界面出现白屏或设置页报错，先确认没有被 Claude 更新覆盖，重新运行 `install.bat` 即可。
+- 本项目采用 MIT 许可，见 [LICENSE](LICENSE)，授权范围是安装脚本本身。
+- 与 Anthropic 官方无关联。仓库与 Release 里都不含账号、密钥或个人路径；脚本只写本机 Claude 安装目录和你的 `AppData`。
+- 汉化文本对应 Claude 官方界面字符串，请仅在个人使用范围内自行分发。
 
 ## 致谢
 
-- [claude-desktop-zh-cn](https://github.com/xixu-me/Claude-Desktop-ZH-CN) — 提供基础前端翻译
+- [claude-desktop-zh-cn](https://github.com/xixu-me/Claude-Desktop-ZH-CN) — 基础前端翻译
